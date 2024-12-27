@@ -10,10 +10,11 @@ import torch
 import numpy as np
 import pytorch_lightning as pl
 from torch.utils.data import ConcatDataset, DataLoader
-from models.tts.naturalspeech2.ns2_dataset import NS2Dataset, NS2Collator, batch_by_size,NS2Dataset_New
+from models.tts.naturalspeech2.ns2_dataset import NS2Dataset, NS2Collator, batch_by_size
 from models.tts.naturalspeech2.ns2_loss import (
     log_pitch_loss,
     log_dur_loss,
+    duration_loss,
 )
 from models.tts.naturalspeech2.flashspeech import FlashSpeech
 from torch.optim import AdamW
@@ -21,6 +22,9 @@ from diffusers import get_scheduler
 import json5
 from models.base.base_sampler import VariableSampler
 import torch.distributed as dist
+import matplotlib.pyplot as plt
+import wandb
+
 class FlashSpeechLightningModule(pl.LightningModule):
     def __init__(self, cfg):
         super().__init__()
@@ -33,8 +37,8 @@ class FlashSpeechLightningModule(pl.LightningModule):
         diff_out, prior_out = self.model(
             code=batch["code"],
             pitch=batch["pitch"],
-            duration=batch["duration"],
             phone_id=batch["phone_id"],
+            tone_id=batch["tone_id"],
             ref_code=batch["ref_code"],
             phone_mask=batch["phone_mask"],
             mask=batch["mask"],
@@ -47,7 +51,8 @@ class FlashSpeechLightningModule(pl.LightningModule):
         diff_out, prior_out = self.forward(batch)
         # 计算损失
         pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
-        dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
+        #dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
+        dur_loss = duration_loss(prior_out["dur_pred_log"], prior_out["logw_"], batch["phone_lengths"])
         diff_loss_x0 = diff_out["ict_loss"].mean()
         total_loss = pitch_loss + dur_loss + diff_loss_x0
 
@@ -57,13 +62,26 @@ class FlashSpeechLightningModule(pl.LightningModule):
         self.log('train_dur_loss', dur_loss, prog_bar=True)
         self.log('train_diff_loss_x0', diff_loss_x0, prog_bar=True)
 
+        # 获取第一个样本的attention alignment并画图
+        fig, ax = plt.subplots(figsize=(12, 6))
+        cax = ax.imshow(prior_out["attn"][-1].detach().cpu(), aspect='auto', origin='lower')
+        fig.colorbar(cax)
+        ax.set_title("Prior Attention Alignment")
+        ax.set_xlabel("Decoder steps")
+        ax.set_ylabel("Encoder steps")
+        
+        # 使用WandB logger记录图像
+        self.logger.experiment.log({"train_attention": wandb.Image(fig)})
+        plt.close(fig)
+
         return total_loss
 
     def validation_step(self, batch, batch_idx):
         diff_out, prior_out = self.forward(batch)
         # 计算损失
         pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
-        dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
+        # dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
+        dur_loss = duration_loss(prior_out["dur_pred_log"], prior_out["logw_"], batch["phone_lengths"])
         diff_loss_x0 = diff_out["ict_loss"].mean()
         total_loss = pitch_loss + dur_loss + diff_loss_x0
 
@@ -72,6 +90,18 @@ class FlashSpeechLightningModule(pl.LightningModule):
         self.log('val_pitch_loss', pitch_loss, prog_bar=True)
         self.log('val_dur_loss', dur_loss, prog_bar=True)
         self.log('val_diff_loss_x0', diff_loss_x0, prog_bar=True)
+
+        # 获取第一个样本的attention alignment并画图
+        fig, ax = plt.subplots(figsize=(12, 6))
+        cax = ax.imshow(prior_out["attn"][-1].detach().cpu(), aspect='auto', origin='lower')
+        fig.colorbar(cax)
+        ax.set_title("Prior Attention Alignment")
+        ax.set_xlabel("Decoder steps")
+        ax.set_ylabel("Encoder steps")
+        
+        # 使用WandB logger记录图像
+        self.logger.experiment.log({"val_attention": wandb.Image(fig)})
+        plt.close(fig)
 
         return total_loss
 
@@ -126,7 +156,7 @@ class NS2DataModule(pl.LightningDataModule):
                 required_batch_size_multiple=torch.cuda.device_count(),
             )
             np.random.seed(980205)
-            batches = np.random.shuffle(batch_sampler)
+            np.random.shuffle(batch_sampler)
  
 
             # num_replicas = dist.get_world_size()
@@ -134,21 +164,21 @@ class NS2DataModule(pl.LightningDataModule):
             # rank = dist.get_rank()
             # print("DDP, .....", num_replicas, rank, flush=True)
             # batches = [x[rank::num_replicas] for x in batches if len(x) % num_replicas == 0]
-            num_replicas = dist.get_world_size()
-            rank = dist.get_rank()
-            batches = [
-                x[
-                    rank :: num_replicas
-                ]
-                for x in batch_sampler
-                if len(x) % num_replicas == 0
-            ]
+            # num_replicas = dist.get_world_size()
+            # rank = dist.get_rank()
+            # batches = [
+            #     x[
+            #         rank :: num_replicas
+            #     ]
+            #     for x in batch_sampler
+            #     if len(x) % num_replicas == 0
+            # ]
             train_loader = DataLoader(
                 self.train_dataset,
                 collate_fn=self.collate_fn,
                 num_workers=self.cfg.train.dataloader.num_worker,
                 batch_sampler=VariableSampler(
-                    batches, drop_last=False 
+                    batch_sampler, drop_last=False 
                 ),
                 pin_memory=True,
             )
@@ -174,11 +204,11 @@ class NS2DataModule(pl.LightningDataModule):
                 max_sentences=self.cfg.train.max_sentences*torch.cuda.device_count(),
                 required_batch_size_multiple=torch.cuda.device_count(),
             )
-            num_replicas = dist.get_world_size()
+            # num_replicas = dist.get_world_size()
             batches = batch_sampler
-            rank = dist.get_rank()
-            print("DDP, .....", num_replicas, rank, flush=True)
-            batches = [x[rank::num_replicas] for x in batches if len(x) % num_replicas == 0]
+            # rank = dist.get_rank()
+            # print("DDP, .....", num_replicas, rank, flush=True)
+            # batches = [x[rank::num_replicas] for x in batches if len(x) % num_replicas == 0]
 
             val_loader = DataLoader(
                 self.val_dataset,

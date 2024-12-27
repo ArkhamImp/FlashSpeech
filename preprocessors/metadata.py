@@ -51,27 +51,27 @@ def cal_metadata(cfg, dataset_types=["train", "test"]):
             total_duration += duration[dataset_type]
 
         # Paths of metadata needed to be generated
-        singer_dict_file = os.path.join(save_dir, cfg.preprocess.spk2id)
-        utt2singer_file = os.path.join(save_dir, cfg.preprocess.utt2spk)
+        # singer_dict_file = os.path.join(save_dir, cfg.preprocess.spk2id)
+        # utt2singer_file = os.path.join(save_dir, cfg.preprocess.utt2spk)
 
-        singer_names = set(
-            f"{replace_augment_name(utt['Dataset'])}_{utt['Singer']}"
-            for utt in all_utterances
-        )
+        # singer_names = set(
+        #     f"{replace_augment_name(utt['Dataset'])}_{utt['Singer']}"
+        #     for utt in all_utterances
+        # )
 
         # Write the utt2singer file and sort the singer names
-        with open(utt2singer_file, "w", encoding="utf-8") as f:
-            for utt in all_utterances:
-                f.write(
-                    f"{utt['Dataset']}_{utt['Uid']}\t{replace_augment_name(utt['Dataset'])}_{utt['Singer']}\n"
-                )
+        # with open(utt2singer_file, "w", encoding="utf-8") as f:
+        #     for utt in all_utterances:
+        #         f.write(
+        #             f"{utt['Dataset']}_{utt['Uid']}\t{replace_augment_name(utt['Dataset'])}_{utt['Singer']}\n"
+        #         )
 
-        singer_names = sorted(singer_names)
-        singer_lut = {name: i for i, name in enumerate(singer_names)}
+        # singer_names = sorted(singer_names)
+        # singer_lut = {name: i for i, name in enumerate(singer_names)}
 
         # dump singers.json
-        with open(singer_dict_file, "w", encoding="utf-8") as f:
-            json.dump(singer_lut, f, indent=4, ensure_ascii=False)
+        # with open(singer_dict_file, "w", encoding="utf-8") as f:
+        #     json.dump(singer_lut, f, indent=4, ensure_ascii=False)
 
         meta_info = {
             "dataset": dataset,
@@ -87,35 +87,35 @@ def cal_metadata(cfg, dataset_types=["train", "test"]):
                 "hours": round(duration[dataset_type] / 3600, 4),
             }
 
-        meta_info["singers"] = {"size": len(singer_lut)}
+        # meta_info["singers"] = {"size": len(singer_lut)}
 
         # Use Counter to count the minutes for each singer
-        total_singer2mins = Counter()
-        training_singer2mins = Counter()
-        for dataset_type in dataset_types:
-            for utt in utterances_dict[dataset_type]:
-                k = f"{replace_augment_name(utt['Dataset'])}_{utt['Singer']}"
-                if dataset_type == "train":
-                    training_singer2mins[k] += utt["Duration"] / 60
-                total_singer2mins[k] += utt["Duration"] / 60
+        # total_singer2mins = Counter()
+        # training_singer2mins = Counter()
+        # for dataset_type in dataset_types:
+        #     for utt in utterances_dict[dataset_type]:
+        #         k = f"{replace_augment_name(utt['Dataset'])}_{utt['Singer']}"
+        #         if dataset_type == "train":
+        #             training_singer2mins[k] += utt["Duration"] / 60
+        #         total_singer2mins[k] += utt["Duration"] / 60
 
-        training_singer2mins = dict(
-            sorted(training_singer2mins.items(), key=lambda x: x[1], reverse=True)
-        )
-        training_singer2mins = {k: round(v, 2) for k, v in training_singer2mins.items()}
-        meta_info["singers"]["training_minutes"] = training_singer2mins
+        # training_singer2mins = dict(
+        #     sorted(training_singer2mins.items(), key=lambda x: x[1], reverse=True)
+        # )
+        # training_singer2mins = {k: round(v, 2) for k, v in training_singer2mins.items()}
+        # meta_info["singers"]["training_minutes"] = training_singer2mins
 
-        total_singer2mins = dict(
-            sorted(total_singer2mins.items(), key=lambda x: x[1], reverse=True)
-        )
-        total_singer2mins = {k: round(v, 2) for k, v in total_singer2mins.items()}
-        meta_info["singers"]["minutes"] = total_singer2mins
+        # total_singer2mins = dict(
+        #     sorted(total_singer2mins.items(), key=lambda x: x[1], reverse=True)
+        # )
+        # total_singer2mins = {k: round(v, 2) for k, v in total_singer2mins.items()}
+        # meta_info["singers"]["minutes"] = total_singer2mins
 
         with open(os.path.join(save_dir, "meta_info.json"), "w") as f:
             json.dump(meta_info, f, indent=4, ensure_ascii=False)
 
-        for singer, min in training_singer2mins.items():
-            print(f"Speaker/Singer {singer}: {min} mins for training")
+        # for singer, min in training_singer2mins.items():
+        #     print(f"Speaker/Singer {singer}: {min} mins for training")
         print("-" * 10, "\n")
 
 

@@ -2,7 +2,7 @@
     "base_config": "config/ns2.json",
     "model_type": "FlashSpeech",
     "dataset": [
-        "libritts"
+        "baker"
     ],
     "preprocess": {
         "use_mel": false,
@@ -24,9 +24,9 @@
         "clip_mode": "mid"
     },
     "model": {
-        "latent_dim": 256,
+        "latent_dim": 128,
         "prior_encoder": {
-            "vocab_size": 100, //100 5000,
+            "vocab_size": 264, //100 5000,
             "pitch_min": 50,
             "pitch_max": 1100,
             "pitch_bins_num": 512,
@@ -60,9 +60,9 @@
         },
         "diffusion": {
             "wavenet": {
-                "input_size": 256,
+                "input_size": 128,
                 "hidden_size": 512,
-                "out_size": 256,
+                "out_size": 128,
                 "num_layers": 40,
                 "cross_attn_per_layer": 3,
                 "dilation_cycle": 2,

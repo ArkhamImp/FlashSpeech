@@ -156,6 +156,7 @@ class TransformerEncoder(nn.Module):
     def __init__(
         self,
         enc_emb_tokens=None,
+        tone_emb_tokens=None,
         encoder_layer=None,
         encoder_hidden=None,
         encoder_head=None,
@@ -193,6 +194,12 @@ class TransformerEncoder(nn.Module):
         else:
             self.use_enc_emb = False
 
+        if tone_emb_tokens != None:
+            self.use_tone_emb = True
+            self.tone_emb_tokens = tone_emb_tokens
+        else:
+            self.use_tone_emb = False
+
         self.position_emb = PositionalEncoding(
             self.encoder_hidden, self.encoder_dropout
         )
@@ -217,12 +224,16 @@ class TransformerEncoder(nn.Module):
         else:
             self.last_ln = nn.LayerNorm(self.encoder_hidden)
 
-    def forward(self, x, key_padding_mask, condition=None):
+    def forward(self, x, key_padding_mask, tone_id=None, condition=None):
         if len(x.shape) == 2 and self.use_enc_emb:
             x = self.enc_emb_tokens(x)
             x = self.position_emb(x)
         else:
             x = self.position_emb(x)  # (B, T, d)
+
+        if self.use_tone_emb:
+            tone_emb = self.tone_emb_tokens(tone_id)
+            x = x + tone_emb
 
         for layer in self.layers:
             x = layer(x, key_padding_mask, condition)
@@ -349,7 +360,7 @@ class DurationPredictor(nn.Module):
         dur_pred_round = torch.clamp(torch.round(x.exp() - 1), min=0).long()
 
         return {
-            "dur_pred_log": x,
+            "dur_pred_log": x * mask,
             "dur_pred": dur_pred,
             "dur_pred_round": dur_pred_round,
         }

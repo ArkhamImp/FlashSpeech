@@ -8,6 +8,9 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 
+def duration_loss(logw, logw_, lengths):
+    loss = torch.sum((logw - logw_) ** 2) / torch.sum(lengths)
+    return loss
 
 def log_dur_loss(dur_pred_log, dur_target, mask, loss_type="l1"):
     # dur_pred_log: (B, N)

@@ -10,7 +10,7 @@ import torch
 import numpy as np
 import pytorch_lightning as pl
 from torch.utils.data import ConcatDataset, DataLoader
-from models.tts.naturalspeech2.ns2_dataset import NS2Dataset, NS2Collator, batch_by_size,NS2Dataset_New
+from models.tts.naturalspeech2.ns2_dataset import NS2Dataset, NS2Collator, batch_by_size
 from models.tts.naturalspeech2.ns2_loss import (
     log_pitch_loss,
     log_dur_loss,
@@ -24,6 +24,7 @@ import torch.distributed as dist
 from transformers import WavLMModel 
 #WavLMLosscond
 from models.tts.naturalspeech2.wavlm_loss import WavLMLosscond
+from encodec import EncodecModel
 
 
 def calculate_adaptive_weight(loss1, loss2, last_layer=None):
@@ -41,14 +42,15 @@ class FlashSpeechLightningModule(pl.LightningModule):
         self.model = FlashSpeech(cfg=self.cfg.model)
 
         # 
- 
-        ckpt = torch.load('/project/buildlam/zhenye/flashspeech_log/ns2_ict_normal_lignt_666_2node_smaller_lr/epochepoch=499-stepstep=160000.ckpt', map_location="cpu")
+        
+        ckpt = torch.load('/aifs4su/mingyang/FlashSpeech/flashspeech_log/epochepoch=1248-stepstep=57454.ckpt', map_location="cpu")
         state_dict = ckpt['state_dict']
         # 调整键名
         new_state_dict = {k.replace('model.', ''): v for k, v in state_dict.items()}
 
         # 加载模型参数
         self.model.load_state_dict(new_state_dict,strict=False)
+        
          
 
 
@@ -61,7 +63,12 @@ class FlashSpeechLightningModule(pl.LightningModule):
         # i delete hidden_states.requires_grad = True RuntimeError: you can only change requires_grad flags of leaf variables.
         self.wavlm.train() 
         self.wavlm.requires_grad_(False)
+        self.wavlm.freeze_feature_encoder()
         self.discriminator = WavLMLosscond()
+        codec_model = EncodecModel.encodec_model_24khz()
+        codec_model.set_target_bandwidth(6.0)
+        codec_model.requires_grad_(False)
+        self.codec = codec_model
 
 
     def forward(self, batch):
@@ -94,9 +101,9 @@ class FlashSpeechLightningModule(pl.LightningModule):
             latent_gen = diff_out['x0_pred']
             latent_gt = diff_out['x0_gt']
  
-            wav_gen = self.model.soundstream.decoder_2(latent_gen*self.model.latent_norm) #  
-            wav_gt = self.model.soundstream.decoder_2(latent_gt*self.model.latent_norm)
-            wav_cond =  self.model.soundstream.decode(batch['ref_code'].long().transpose(0,1))    
+            wav_gen = self.codec.decoder(latent_gen)
+            wav_gt = self.codec.decoder(latent_gt)
+            wav_cond =  self.codec.decoder(self.model.quantizer.decode(batch['ref_code'].long().transpose(0,1)))    
 
             # 提取生成音频的特征
             y_rec = self.wavlm(wav_gen.squeeze(1), output_hidden_states=True).hidden_states
@@ -140,9 +147,9 @@ class FlashSpeechLightningModule(pl.LightningModule):
                 latent_gen = diff_out['x0_pred']
                 latent_gt = diff_out['x0_gt']
     
-                wav_gen = self.model.soundstream.decoder_2(latent_gen*self.model.latent_norm)  
-                wav_gt = self.model.soundstream.decoder_2(latent_gt*self.model.latent_norm)
-                wav_cond =   self.model.soundstream.decode(batch['ref_code'].long().transpose(0,1))    
+                wav_gen = self.codec.decoder(latent_gen)
+                wav_gt = self.codec.decoder(latent_gt)
+                wav_cond =  self.codec.decoder(self.model.quantizer.decode(batch['ref_code'].long().transpose(0,1)))    
 
 
             # 提取生成音频的特征
@@ -244,7 +251,7 @@ class NS2DataModule(pl.LightningDataModule):
                 required_batch_size_multiple=torch.cuda.device_count(),
             )
             np.random.seed(980205)
-            batches = np.random.shuffle(batch_sampler)
+            np.random.shuffle(batch_sampler)
  
 
             # num_replicas = dist.get_world_size()
@@ -252,21 +259,21 @@ class NS2DataModule(pl.LightningDataModule):
             # rank = dist.get_rank()
             # print("DDP, .....", num_replicas, rank, flush=True)
             # batches = [x[rank::num_replicas] for x in batches if len(x) % num_replicas == 0]
-            num_replicas = dist.get_world_size()
-            rank = dist.get_rank()
-            batches = [
-                x[
-                    rank :: num_replicas
-                ]
-                for x in batch_sampler
-                if len(x) % num_replicas == 0
-            ]
+            # num_replicas = dist.get_world_size()
+            # rank = dist.get_rank()
+            # batches = [
+            #     x[
+            #         rank :: num_replicas
+            #     ]
+            #     for x in batch_sampler
+            #     if len(x) % num_replicas == 0
+            # ]
             train_loader = DataLoader(
                 self.train_dataset,
                 collate_fn=self.collate_fn,
                 num_workers=self.cfg.train.dataloader.num_worker,
                 batch_sampler=VariableSampler(
-                    batches, drop_last=False 
+                    batch_sampler, drop_last=False 
                 ),
                 pin_memory=True,
             )
@@ -292,11 +299,11 @@ class NS2DataModule(pl.LightningDataModule):
                 max_sentences=self.cfg.train.max_sentences*torch.cuda.device_count(),
                 required_batch_size_multiple=torch.cuda.device_count(),
             )
-            num_replicas = dist.get_world_size()
+            # num_replicas = dist.get_world_size()
             batches = batch_sampler
-            rank = dist.get_rank()
-            print("DDP, .....", num_replicas, rank, flush=True)
-            batches = [x[rank::num_replicas] for x in batches if len(x) % num_replicas == 0]
+            # rank = dist.get_rank()
+            # print("DDP, .....", num_replicas, rank, flush=True)
+            # batches = [x[rank::num_replicas] for x in batches if len(x) % num_replicas == 0]
 
             val_loader = DataLoader(
                 self.val_dataset,

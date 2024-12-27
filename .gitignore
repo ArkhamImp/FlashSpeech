@@ -1,0 +1,12 @@
+baker
+data
+flashspeech_log
+genshin
+.vscode
+output*
+*.wav
+*.out
+train_baker
+**/__pycache__/*
+wandb
+*.pyc

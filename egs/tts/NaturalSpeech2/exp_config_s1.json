@@ -1,30 +1,104 @@
 {
     "base_config": "egs/tts/NaturalSpeech2/exp_config_base_s1.json",
     "dataset": [
-      "libritts"
+      "Genshin"
     ],
     "dataset_path": {
-      "libritts": "/aifs4su/data/zheny/Flashspeech/LibriTTS/LibriTTS"
+      "Genshin": "/aifs4su/mingyang/FlashSpeech/data/genshin"
     },    
     "preprocess": {
       // Specify the output root path to save the processed data 
-      "extract_phone": true,
+      "extract_phone": false,
       "phone_extractor": "espeak", // "espeak, pypinyin, pypinyin_initials_finals, lexicon (only for language=en-us right now)"      "use_phone": true,
       "processed_dir": "data",
       "train_file": "train.json",
       "valid_file": "test.json",
       "read_metadata": false,
-      "metadata_dir": "metadata"
+      "metadata_dir": "metadata",
+      "extract_acoustic_token": true,
+      "acoustic_token_extractor": "Encodec",
+      "acoustic_token_dir": "code",
+      "sample_rate": 24000
     },
     // Specify the output root path to save model ckpts and logs
     "log_dir": "ckpts/tts",
+    "model": {
+        "latent_dim": 128,
+        "prior_encoder": {
+            "vocab_size": 264, //100 5000,
+            "pitch_min": 50,
+            "pitch_max": 1100,
+            "pitch_bins_num": 512,
+            "encoder": {
+                "encoder_layer": 6,
+                "encoder_hidden": 128,
+                "encoder_head": 8,
+                "conv_filter_size": 2048,
+                "conv_kernel_size": 9,
+                "encoder_dropout": 0.2,
+                "use_cln": true
+            },
+            "duration_predictor": {
+                "input_size": 128,
+                "filter_size": 128,
+                "kernel_size": 3,
+                "conv_layers": 30,
+                "cross_attn_per_layer": 3,
+                "attn_head": 8,
+                "drop_out": 0.5
+            },
+            "pitch_predictor": {
+                "input_size": 128,
+                "filter_size": 128,
+                "kernel_size": 5,
+                "conv_layers": 30,
+                "cross_attn_per_layer": 3,
+                "attn_head": 8,
+                "drop_out": 0.5
+            }
+        },
+        "diffusion": {
+            "wavenet": {
+                "input_size": 128,
+                "hidden_size": 128,
+                "out_size": 128,
+                "num_layers": 40,
+                "cross_attn_per_layer": 3,
+                "dilation_cycle": 2,
+                "attn_head": 8,
+                "drop_out": 0.2
+            },
+            "beta_min": 0.05,
+            "beta_max": 20,
+            "sigma": 1.0,
+            "noise_factor": 1.0,
+            "ode_solver": "euler",
+            "diffusion_type": "diffusion",
+            "all_steps": 160000 ,
+            "is_fixed": false
+        },
+        "prompt_encoder": {
+            "encoder_layer": 6,
+            "encoder_hidden": 128,
+            "encoder_head": 8,
+            "conv_filter_size": 2048,
+            "conv_kernel_size": 9,
+            "encoder_dropout": 0.2,
+            "use_cln": false
+        },
+        "query_emb": {
+            "query_token_num": 32,
+            "hidden_size": 128,
+            "head_num": 8
+        }
+    },
     "train": {
         // New trainer and Accelerator
         "gradient_accumulation_step": 1,
         "tracker": ["tensorboard"],
         "max_epoch": 5000,
         "save_checkpoint_stride": [1],
-        "keep_last": [1000],
+        "keep_last": [5],
         "run_eval": [false],
         "dataloader": {
           "num_worker": 16,
@@ -35,7 +109,7 @@
         },
         "use_dynamic_batchsize": true,
         "batch_size": 1000,
-        "max_tokens": 22000,
+        "max_tokens": 40000,
         "max_sentences": 1000,
         "lr_warmup_steps": 10000,
         "lr_scheduler": "cosine",

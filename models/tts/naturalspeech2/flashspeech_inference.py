@@ -16,8 +16,9 @@ from encodec.utils import convert_audio
 from utils.util import load_config
 
 from text import text_to_sequence
-from text.cmudict import valid_symbols
+from text.pinyin import valid_symbols
 from text.g2p import preprocess_english, read_lexicon
+from chinese_text.pinyin import PinYin
 
 import torchaudio
 
@@ -30,9 +31,13 @@ class FlashSpeechInference:
         self.model = self.build_model()
         # self.codec = self.build_codec()
 
-        self.symbols = valid_symbols + ["sp", "spn", "sil"] + ["<s>", "</s>"]
+        self.symbols = ["_"] + valid_symbols + ["sp", "sp1", "sil"] + ["<s>", "</s>"]+["<br>"]
         self.phone2id = {s: i for i, s in enumerate(self.symbols)}
         self.id2phone = {i: s for s, i in self.phone2id.items()}
+        codec_model = EncodecModel.encodec_model_24khz()
+        codec_model.set_target_bandwidth(6.0)
+        codec_model.requires_grad_(False)
+        self.codec = codec_model.to(self.args.device)
 
     def build_model(self):
         # model = NaturalSpeech2(self.cfg.model)
@@ -62,15 +67,16 @@ class FlashSpeechInference:
         ref_wav_path = self.args.ref_audio
         ref_wav, sr = torchaudio.load(ref_wav_path)
         ref_wav = convert_audio(
-            ref_wav, sr, 16000, 1
+            ref_wav, sr, 24000, 1
         )
         ref_wav = ref_wav.unsqueeze(0).to(device=self.args.device)
 
+
         with torch.no_grad():
-            # encoded_frames = self.codec.encode(ref_wav)
-            encoded_frames = self.model.soundstream.encode(ref_wav,None)
-            # ref_code = torch.cat([encoded[0] for encoded in encoded_frames], dim=-1)
-            ref_code = encoded_frames[:,0,:]
+            encoded_frames = self.codec.encode(ref_wav)
+            # encoded_frames = self.model.soundstream.encode(ref_wav,None)
+            ref_code = torch.cat([encoded[0] for encoded in encoded_frames], dim=-1)
+            # ref_code = encoded_frames[:,0,:]
         # print(ref_code.shape)
 
         # ref_mask = torch.ones(ref_code.shape[0], ref_code.shape[-1]).to(ref_code.device)
@@ -82,9 +88,10 @@ class FlashSpeechInference:
     def inference(self):
         ref_code, ref_mask = self.get_ref_code()
 
-        lexicon = read_lexicon(self.cfg.preprocess.lexicon_path)
-        phone_seq = preprocess_english(self.args.text, lexicon)
-        phone_seq="<s> "+phone_seq+" </s>"
+        # lexicon = read_lexicon(self.cfg.preprocess.lexicon_path)
+        # phone_seq = preprocess_english(self.args.text, lexicon)
+        pinyin = PinYin()
+        phone_seq = pinyin.chinese_to_phonemes(self.args.text)
         print(phone_seq)
 
         phone_id = np.array(
@@ -105,10 +112,12 @@ class FlashSpeechInference:
         print(prior_out["dur_pred_round"])
         print(torch.sum(prior_out["dur_pred_round"]))
 
-        ref_wav = self.model.soundstream.decode(ref_code.unsqueeze(1)) #.transpose(0, 1))
+        # ref_wav = self.model.soundstream.decode(ref_code.unsqueeze(1)) #.transpose(0, 1))
 
-        rec_wav = self.model.soundstream.decoder_2(x0*3)
+        # rec_wav = self.model.soundstream.decoder_2(x0*3)
         # ref_wav = self.codec.decoder(latent_ref)
+        rec_wav = self.codec.decoder(x0)
+        # rec_wav = torch.nn.functional.normalize(rec_wav, dim=2)
 
         os.makedirs(self.args.output_dir, exist_ok=True)
 
@@ -117,7 +126,7 @@ class FlashSpeechInference:
                 self.args.output_dir, self.args.text.replace(" ", "_", 100)
             ),
             rec_wav[0, 0].detach().cpu().numpy(),
-            samplerate=16000,
+            samplerate=24000,
         )
 
     def add_arguments(parser: argparse.ArgumentParser):

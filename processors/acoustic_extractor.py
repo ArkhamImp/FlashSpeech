@@ -679,7 +679,7 @@ def cal_pitch_statistics(dataset, output_path, cfg):
     if has_existed(os.path.join(save_dir, "statistics.json")):
         return
     # load singers and ids
-    singers = json.load(open(os.path.join(dataset_dir, "singers.json"), "r"))
+    # singers = json.load(open(os.path.join(dataset_dir, "singers.json"), "r"))
 
     # combine train and test metadata
     metadata = []
@@ -689,12 +689,12 @@ def cal_pitch_statistics(dataset, output_path, cfg):
             metadata.extend(json.load(f))
 
     # use different scalers for each singer
-    pitch_scalers = [[] for _ in range(len(singers))]
-    total_pitch_scalers = [[] for _ in range(len(singers))]
+    pitch_scalers = []
+    total_pitch_scalers = []
 
     for utt_info in metadata:
         utt = f'{utt_info["Dataset"]}_{utt_info["Uid"]}'
-        singer = utt_info["Singer"]
+        # singer = utt_info["Singer"]
         pitch_path = os.path.join(dataset_dir, pitch_dir, utt_info["Uid"] + ".npy")
         # total_pitch contains all pitch including unvoiced frames
         if not os.path.exists(pitch_path):
@@ -705,50 +705,50 @@ def cal_pitch_statistics(dataset, output_path, cfg):
         # pitch = total_pitch[total_pitch != 0]
         if cfg.preprocess.pitch_remove_outlier:
             pitch = remove_outlier(total_pitch)
-        spkid = singers[f"{replace_augment_name(dataset)}_{singer}"]
+        # spkid = singers[f"{replace_augment_name(dataset)}_{singer}"]
 
         # update pitch scalers
-        pitch_scalers[spkid].extend(pitch.tolist())
+        pitch_scalers.extend(pitch.tolist())
         # update total pitch scalers
-        total_pitch_scalers[spkid].extend(total_pitch.tolist())
+        total_pitch_scalers.extend(total_pitch.tolist())
 
     # save pitch statistics for each singer in dict
     sta_dict = {}
-    for singer in singers:
-        spkid = singers[singer]
-        # voiced pitch statistics
-        mean, std, min, max, median = (
-            np.mean(pitch_scalers[spkid]),
-            np.std(pitch_scalers[spkid]),
-            np.min(pitch_scalers[spkid]),
-            np.max(pitch_scalers[spkid]),
-            np.median(pitch_scalers[spkid]),
-        )
+    # for singer in singers:
+    #     spkid = singers[singer]
+    # voiced pitch statistics
+    mean, std, min, max, median = (
+        np.mean(pitch_scalers),
+        np.std(pitch_scalers),
+        np.min(pitch_scalers),
+        np.max(pitch_scalers),
+        np.median(pitch_scalers),
+    )
 
-        # total pitch statistics
-        mean_t, std_t, min_t, max_t, median_t = (
-            np.mean(total_pitch_scalers[spkid]),
-            np.std(total_pitch_scalers[spkid]),
-            np.min(total_pitch_scalers[spkid]),
-            np.max(total_pitch_scalers[spkid]),
-            np.median(total_pitch_scalers[spkid]),
-        )
-        sta_dict[singer] = {
-            "voiced_positions": {
-                "mean": mean,
-                "std": std,
-                "median": median,
-                "min": min,
-                "max": max,
-            },
-            "total_positions": {
-                "mean": mean_t,
-                "std": std_t,
-                "median": median_t,
-                "min": min_t,
-                "max": max_t,
-            },
-        }
+    # total pitch statistics
+    mean_t, std_t, min_t, max_t, median_t = (
+        np.mean(total_pitch_scalers),
+        np.std(total_pitch_scalers),
+        np.min(total_pitch_scalers),
+        np.max(total_pitch_scalers),
+        np.median(total_pitch_scalers),
+    )
+    sta_dict = {
+        "voiced_positions": {
+            "mean": mean,
+            "std": std,
+            "median": median,
+            "min": min,
+            "max": max,
+        },
+        "total_positions": {
+            "mean": mean_t,
+            "std": std_t,
+            "median": median_t,
+            "min": min_t,
+            "max": max_t,
+        },
+    }
 
     # save statistics
     with open(os.path.join(save_dir, "statistics.json"), "w") as f:

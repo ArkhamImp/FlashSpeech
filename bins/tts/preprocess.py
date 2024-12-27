@@ -164,9 +164,9 @@ def preprocess(cfg, args):
                 dataset, args.num_workers
             )
         )
-        extract_acoustic_features(
-            dataset, output_path, cfg, dataset_types, args.num_workers
-        )
+        # extract_acoustic_features(
+        #     dataset, output_path, cfg, dataset_types, args.num_workers
+        # )
         # Calculate the statistics of acoustic features
         if cfg.preprocess.mel_min_max_norm:
             acoustic_extractor.cal_mel_min_max(dataset, output_path, cfg)

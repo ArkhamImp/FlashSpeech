@@ -108,9 +108,9 @@ def main():
     print("Experiment name: ", args.exp_name)
 
  
-    if args.config.endswith("s1"):
+    if args.config.endswith("s1.json"):
         from models.tts.naturalspeech2.flashspeech_trainer import FlashSpeechLightningModule,NS2DataModule
-    elif args.config.endswith("s2"):
+    elif args.config.endswith("s2.json"):
         from models.tts.naturalspeech2.flashspeech_trainer_stage2 import FlashSpeechLightningModule,NS2DataModule
 
     # 实例化 FlashSpeech 的 LightningModule 和 DataModule
@@ -129,8 +129,9 @@ def main():
     checkpoint_callback = ModelCheckpoint(
         dirpath=args.exp_name,
         filename='epoch{epoch}-step{step}',
-        save_top_k=-1,
-        every_n_epochs=1,
+        monitor='val_total_loss',
+        save_top_k=5,
+        every_n_epochs=100,
         save_last=True,
     )
 
@@ -141,16 +142,17 @@ def main():
     trainer = pl.Trainer(
         max_epochs=cfg.train.max_epoch,
         accelerator=accelerator,
-        num_nodes=2, #!num_nodes, 1 2
+        num_nodes=1, #!num_nodes, 1 2
         devices=devices,
-        precision=16,
+        precision=32,
         gradient_clip_val=0.5,
         accumulate_grad_batches=cfg.train.gradient_accumulation_step,
         default_root_dir=args.exp_name,  # 设置默认的保存路径
         logger=logger,
         use_distributed_sampler=False,
         # 如果需要分布式训练，可以设置 strategy 参数，例如 'ddp'
-        strategy='ddp_find_unused_parameters_true',
+        strategy='auto',
+        # strategy='ddp_find_unused_parameters_true',
         callbacks=[checkpoint_callback],  # 添加回调
     )
 

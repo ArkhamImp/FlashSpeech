@@ -25,7 +25,7 @@
         "clip_mode": "mid",
         "f0_min": 50,
         "f0_max": 1100,
-        "hop_size": 200
+        "hop_size": 320
     },
     "model": {
         "latent_dim": 256,

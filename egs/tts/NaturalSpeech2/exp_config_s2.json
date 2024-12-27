@@ -1,20 +1,24 @@
 {
     "base_config": "egs/tts/NaturalSpeech2/exp_config_base_s2.json",
     "dataset": [
-      "libritts"
+      "baker"
     ],
     "dataset_path": {
-      "libritts": "/aifs4su/data/zheny/Flashspeech/LibriTTS/LibriTTS"
+      "baker": "baker"
     },    
     "preprocess": {
       // Specify the output root path to save the processed data 
-      "extract_phone": true,
+      "extract_phone": false,
       "phone_extractor": "espeak", // "espeak, pypinyin, pypinyin_initials_finals, lexicon (only for language=en-us right now)"      "use_phone": true,
       "processed_dir": "data",
       "train_file": "train.json",
       "valid_file": "test.json",
       "read_metadata": false,
-      "metadata_dir": "metadata"
+      "metadata_dir": "metadata",
+      "extract_acoustic_token": false,
+      "acoustic_token_extractor": "Encodec",
+      "acoustic_token_dir": "code",
+      "sample_rate": 24000
     },
     // Specify the output root path to save model ckpts and logs
     "log_dir": "ckpts/tts",
@@ -35,7 +39,7 @@
         },
         "use_dynamic_batchsize": true,
         "batch_size": 1000,
-        "max_tokens": 12000,
+        "max_tokens": 10000,
         "max_sentences": 1000,
         "lr_warmup_steps": 10000,
         "lr_scheduler": "cosine",

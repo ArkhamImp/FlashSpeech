@@ -10,6 +10,7 @@ def maximum_path(neg_cent, mask):
     neg_cent: [b, t_t, t_s]
     mask: [b, t_t, t_s]
     """
+    neg_cent = neg_cent * mask
     device = neg_cent.device
     dtype = neg_cent.dtype
     neg_cent = neg_cent.data.cpu().numpy().astype(np.float32)
