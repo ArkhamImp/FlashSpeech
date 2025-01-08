@@ -15,10 +15,12 @@ from encodec import EncodecModel
 from encodec.utils import convert_audio
 from utils.util import load_config
 
-from text import text_to_sequence
-from text.pinyin import valid_symbols
-from text.g2p import preprocess_english, read_lexicon
-from chinese_text.pinyin import PinYin
+# from text import text_to_sequence
+# from text.pinyin import valid_symbols
+# from text.g2p import preprocess_english, read_lexicon
+# from chinese_text.pinyin import PinYin
+from new_text.cleaner import clean_text
+from new_text import cleaned_text_to_sequence
 
 import torchaudio
 
@@ -31,9 +33,9 @@ class FlashSpeechInference:
         self.model = self.build_model()
         # self.codec = self.build_codec()
 
-        self.symbols = ["_"] + valid_symbols + ["sp", "sp1", "sil"] + ["<s>", "</s>"]+["<br>"]
-        self.phone2id = {s: i for i, s in enumerate(self.symbols)}
-        self.id2phone = {i: s for s, i in self.phone2id.items()}
+        # self.symbols = ["_"] + valid_symbols + ["sp", "sp1", "sil"] + ["<s>", "</s>"]+["<br>"]
+        # self.phone2id = {s: i for i, s in enumerate(self.symbols)}
+        # self.id2phone = {i: s for s, i in self.phone2id.items()}
         codec_model = EncodecModel.encodec_model_24khz()
         codec_model.set_target_bandwidth(6.0)
         codec_model.requires_grad_(False)
@@ -90,23 +92,25 @@ class FlashSpeechInference:
 
         # lexicon = read_lexicon(self.cfg.preprocess.lexicon_path)
         # phone_seq = preprocess_english(self.args.text, lexicon)
-        pinyin = PinYin()
-        phone_seq = pinyin.chinese_to_phonemes(self.args.text)
-        print(phone_seq)
+        norm_text, phone, tone, word2ph = clean_text(self.args.text, 'ZH')
+        phone_id, tone_id, language = cleaned_text_to_sequence(phone, tone, 'ZH')
 
-        phone_id = np.array(
-            [
-                *map(
-                    self.phone2id.get,
-                    phone_seq.replace("{", "").replace("}", "").split(),
-                )
-            ]
-        )
-        phone_id = torch.from_numpy(phone_id).unsqueeze(0).to(device=self.args.device)
+        print(phone)
+
+        # phone_id = np.array(
+        #     [
+        #         *map(
+        #             self.phone2id.get,
+        #             phone_seq.replace("{", "").replace("}", "").split(),
+        #         )
+        #     ]
+        # )
+        phone_id = torch.LongTensor(phone_id).unsqueeze(0).to(device=self.args.device)
+        tone_id = torch.LongTensor(tone_id).unsqueeze(0).to(device=self.args.device)
         print(phone_id)
         print('inference_step',self.args.inference_step)
         x0, prior_out = self.model.inference(
-            ref_code, phone_id, ref_mask, self.args.inference_step
+            ref_code, phone_id, tone_id, ref_mask, self.args.inference_step
         )
         print(prior_out["dur_pred"])
         print(prior_out["dur_pred_round"])

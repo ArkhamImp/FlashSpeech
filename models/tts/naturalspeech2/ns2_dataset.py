@@ -173,6 +173,13 @@ class NS2Dataset(torch.utils.data.Dataset):
         pitch_root_path = os.path.join(self.processed_data_dir, 'pitch')
         pitch_path = os.path.join(pitch_root_path, f"{path_formatted_uid}.npy")
         pitch = np.load(pitch_path)
+
+        mel_root_path = os.path.join(self.processed_data_dir, 'mels')
+        mel_path = os.path.join(mel_root_path, f"{path_formatted_uid}.npy")
+        mel = np.load(mel_path)
+        with open(os.path.join(self.processed_data_dir, 'mels.stat'), 'rb') as f:
+            scaler = pickle.load(f)
+        mel = scaler.transform(mel.transpose()).transpose()
   
         # textgrid_path = os.path.join('/scratch/buildlam/speech_yz/LibriTTS_text_grid_11',f"{path_formatted_uid}.TextGrid")
         # textgrid = tgt.io.read_textgrid(textgrid_path)
@@ -199,8 +206,8 @@ class NS2Dataset(torch.utils.data.Dataset):
 
         # 获取说话人ID
         # spkid = self.metadata[index]["Singer"]
-        code, pitch, phone_id, frame_nums = self.align_length(
-            code, pitch, phone_id, frame_nums
+        code, pitch, phone_id, mel, frame_nums = self.align_length(
+            code, pitch, phone_id, mel, frame_nums
         )
 
         # spkid
@@ -224,6 +231,7 @@ class NS2Dataset(torch.utils.data.Dataset):
                 "ref_frame_nums": ref_frame_nums,
                 "ref_pitch": ref_pitch,
                 "tone_id": tone_id,
+                "mel": mel
             }
         )
 
@@ -234,23 +242,25 @@ class NS2Dataset(torch.utils.data.Dataset):
  
         return utt_info["Duration"]*75
 
-    def align_length(self, code, pitch, phone_id, frame_nums):
+    def align_length(self, code, pitch, phone_id, mel, frame_nums):
         # aligh lenght of code, pitch, duration, phone_id, and frame nums
         code_len = code.shape[1]
         pitch_len = len(pitch)
-        min_len = min(code_len, pitch_len)
+        mel_len = mel.shape[1]
+        min_len = min(code_len, pitch_len, mel_len)
         code = code[:, :min_len]
         # if pitch_len >= min_len:
         pitch = pitch[:min_len]
         # else:
         #     pitch = np.pad(pitch, (0, min_len - pitch_len), mode="edge")
+        mel = mel[:, :min_len]
         frame_nums = min_len
         # if dur_sum > min_len:
         # assert (duration[-1] - (dur_sum - min_len)) >= 0
         # duration[-1] = duration[-1] - (dur_sum - min_len)
         # assert duration[-1] >= 0
 
-        return code, pitch, phone_id, frame_nums
+        return code, pitch, phone_id, mel, frame_nums
 
     def get_target_and_reference(self, code, pitch, phone_id, tone_id, frame_nums):
         phone_nums = len(phone_id)
@@ -380,6 +390,13 @@ class NS2Collator(BaseOfflineCollator):
                 packed_batch_features["ref_frame_nums"] = torch.LongTensor(
                     [b["ref_frame_nums"] for b in batch]
                 )
+            elif key == "mel":
+                mels = [torch.from_numpy(b["mel"]).transpose(0, 1) for b in batch]
+                packed_batch_features["mel"] = pad_sequence(
+                    mels,
+                    batch_first=True,
+                    padding_value=0,
+                ).transpose(1, 2)
             else:
                 pass
 

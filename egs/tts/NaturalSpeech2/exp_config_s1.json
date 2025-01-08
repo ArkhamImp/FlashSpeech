@@ -55,7 +55,8 @@
                 "cross_attn_per_layer": 3,
                 "attn_head": 8,
                 "drop_out": 0.5
-            }
+            },
+            "dp": "f5"
         },
         "diffusion": {
             "wavenet": {
@@ -109,7 +110,7 @@
         },
         "use_dynamic_batchsize": true,
         "batch_size": 1000,
-        "max_tokens": 40000,
+        "max_tokens": 20000,
         "max_sentences": 1000,
         "lr_warmup_steps": 10000,
         "lr_scheduler": "cosine",

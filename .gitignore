@@ -10,3 +10,5 @@ train_baker
 **/__pycache__/*
 wandb
 *.pyc
+**/*.pyc
+**/**/*.pyc

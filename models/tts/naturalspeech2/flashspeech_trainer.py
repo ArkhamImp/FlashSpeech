@@ -36,6 +36,7 @@ class FlashSpeechLightningModule(pl.LightningModule):
     def forward(self, batch):
         diff_out, prior_out = self.model(
             code=batch["code"],
+            mel=batch["mel"],
             pitch=batch["pitch"],
             phone_id=batch["phone_id"],
             tone_id=batch["tone_id"],

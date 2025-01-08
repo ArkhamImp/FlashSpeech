@@ -147,6 +147,7 @@ class FlashSpeech(nn.Module):
     def forward(
         self,
         code=None,
+        mel=None,
         pitch=None,
         phone_id=None,
         tone_id=None,
@@ -184,6 +185,7 @@ class FlashSpeech(nn.Module):
         prior_out = self.prior_encoder(
             phone_id=phone_id,
             tone_id=tone_id,
+            mel=mel,
             latent=latent,
             duration=None,
             pitch=pitch,
@@ -201,12 +203,14 @@ class FlashSpeech(nn.Module):
 
     @torch.no_grad()
     def inference(
-        self, ref_code=None, phone_id=None, ref_mask=None, inference_steps=1000
+        self, ref_code=None, phone_id=None, tone_id=None, ref_mask=None, inference_steps=1000
     ):
         ref_latent = self.code_to_latent(ref_code)
 
-        if self.latent_dim is not None:
+        if self.prompt_lin is not None:
             ref_latent = self.prompt_lin(ref_latent.transpose(1, 2))
+        else:
+            ref_latent = ref_latent.transpose(1, 2)
 
         ref_latent = self.prompt_encoder(ref_latent, ref_mask, condition=None)
         spk_emb = ref_latent.transpose(1, 2)  # (B, d, T')
@@ -224,8 +228,9 @@ class FlashSpeech(nn.Module):
         )  # (B, query_emb_num, d)
         phone_mask = torch.ones(phone_id.size(1)).unsqueeze(0).to(phone_id.device)
 
-        prior_out = self.prior_encoder.inference(
+        prior_out = self.prior_encoder(
             phone_id=phone_id,
+            tone_id=tone_id,
             duration=None,
             pitch=None,
             phone_mask=phone_mask,

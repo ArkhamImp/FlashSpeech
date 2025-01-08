@@ -65,6 +65,7 @@ class PriorEncoder(nn.Module):
             enc_emb_tokens=self.enc_emb_tokens, tone_emb_tokens=self.tone_emb_tokens, cfg=cfg.encoder
         )
         self.proj_m = nn.Conv1d(128, 128, 1)
+        self.y_norm = nn.BatchNorm1d(128)
 
         self.duration_predictor = DurationPredictor(cfg.duration_predictor)
         self.pitch_predictor = PitchPredictor(cfg.pitch_predictor)
@@ -89,6 +90,7 @@ class PriorEncoder(nn.Module):
         self,
         phone_id,
         tone_id,
+        mel=None,
         latent=None,
         duration=None,
         pitch=None,
@@ -116,60 +118,60 @@ class PriorEncoder(nn.Module):
 
         x = self.encoder(phone_id, phone_mask, tone_id, ref_emb.transpose(1, 2))
         # print(torch.min(x), torch.max(x))
-        mu_x = self.proj_m(x.transpose(1, 2)).transpose(1, 2) * phone_mask.unsqueeze(-1) 
-        # m_x, logs_x = torch.split(x_stats, 512, dim=2)
-        dur_pred_out = self.duration_predictor(x.detach(), phone_mask, ref_emb, ref_mask)
-        # dur_pred_out: {dur_pred_log, dur_pred, dur_pred_round}
-        
-        
 
+        if self.cfg.dp == "mas":
+            mu_x = self.proj_m(x.transpose(1, 2)).transpose(1, 2) * phone_mask.unsqueeze(-1) 
+            dur_pred_out = self.duration_predictor(x.detach(), phone_mask, ref_emb, ref_mask)
+            # dur_pred_out: {dur_pred_log, dur_pred, dur_pred_round}
+            if is_inference:
+                logw = dur_pred_out["dur_pred_log"]
+                w = torch.exp(logw) * phone_mask
+                dur_pred_out["dur_pred"] = w
+                w_ceil = torch.ceil(w)
+                dur_pred_out["dur_pred_round"] = w_ceil
+                y_lengths = torch.clamp_min(torch.sum(w_ceil, 1), 1).long()
+                y_max_length = y_lengths.max()
+                y_max_length_ = fix_len_compatibility(y_max_length)
 
-        if is_inference:
-            logw = dur_pred_out["dur_pred_log"]
-            w = torch.exp(logw) * phone_mask
-            w_ceil = torch.ceil(w)
-            y_lengths = torch.clamp_min(torch.sum(w_ceil, 1), 1).long()
-            y_max_length = y_lengths.max()
-            y_max_length_ = fix_len_compatibility(y_max_length)
+                # Using obtained durations `w` construct alignment map `attn`
+                y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(phone_mask.dtype)
+                attn_mask = phone_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
+                attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)
+            else:
+                attn_mask = phone_mask.unsqueeze(1).unsqueeze(-1) * mask.unsqueeze(1).unsqueeze(2)
+                # with torch.no_grad():
+                #     # negative cross-entropy
+                #     s_p_sq_r = torch.exp(-2 * logs_x)  # [b, d, t]
+                #     neg_cent1 = torch.sum(
+                #         -0.5 * math.log(2 * math.pi) - logs_x, [2], keepdim=True
+                #     )  # [b, 1, t_s]
+                #     neg_cent2 = torch.matmul(
+                #         s_p_sq_r, -0.5 * (y**2)
+                #     )  # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
+                #     neg_cent3 = torch.matmul(
+                #         (m_x * s_p_sq_r), y
+                #     )  # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
+                #     neg_cent4 = torch.sum(
+                #         -0.5 * (m_x**2) * s_p_sq_r, [2], keepdim=True
+                #     )  # [b, 1, t_s]
+                #     neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4
+                #     attn = monotonic_align.maximum_path(neg_cent, attn_mask.squeeze(1))
+                #     attn = attn.detach()
+                with torch.no_grad():
+                    # y = self.y_norm(latent)
+                    y = mel
+                    const = -0.5 * math.log(2 * math.pi) * mu_x.size(-1)
+                    factor = -0.5 * torch.ones(mu_x.shape, dtype=mu_x.dtype, device=mu_x.device)
+                    y_square = torch.matmul(factor, y**2)
+                    y_mu_double = torch.matmul(2.0 * (factor * mu_x), y)
+                    mu_square = torch.sum(factor * (mu_x**2), 2).unsqueeze(-1)
+                    log_prior = y_square - y_mu_double + mu_square + const
 
-            # Using obtained durations `w` construct alignment map `attn`
-            y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(phone_mask.dtype)
-            attn_mask = phone_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
-            attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)
-        else:
-            attn_mask = phone_mask.unsqueeze(1).unsqueeze(-1) * mask.unsqueeze(1).unsqueeze(2)
-            y = latent
-            # with torch.no_grad():
-            #     # negative cross-entropy
-            #     s_p_sq_r = torch.exp(-2 * logs_x)  # [b, d, t]
-            #     neg_cent1 = torch.sum(
-            #         -0.5 * math.log(2 * math.pi) - logs_x, [2], keepdim=True
-            #     )  # [b, 1, t_s]
-            #     neg_cent2 = torch.matmul(
-            #         s_p_sq_r, -0.5 * (y**2)
-            #     )  # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
-            #     neg_cent3 = torch.matmul(
-            #         (m_x * s_p_sq_r), y
-            #     )  # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
-            #     neg_cent4 = torch.sum(
-            #         -0.5 * (m_x**2) * s_p_sq_r, [2], keepdim=True
-            #     )  # [b, 1, t_s]
-            #     neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4
-            #     attn = monotonic_align.maximum_path(neg_cent, attn_mask.squeeze(1))
-            #     attn = attn.detach()
-            with torch.no_grad():
-                const = -0.5 * math.log(2 * math.pi) * mu_x.size(-1)
-                factor = -0.5 * torch.ones(mu_x.shape, dtype=mu_x.dtype, device=mu_x.device)
-                y_square = torch.matmul(factor, y**2)
-                y_mu_double = torch.matmul(2.0 * (factor * mu_x), y)
-                mu_square = torch.sum(factor * (mu_x**2), 2).unsqueeze(-1)
-                log_prior = y_square - y_mu_double + mu_square + const
-
-                attn = monotonic_align.maximum_path(log_prior, attn_mask.squeeze(1))
-                attn = attn.detach()  # b, t_text, T_mel
-        
-        logw_ = torch.log(1e-8 + torch.sum(attn, -1)) * phone_mask
-        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x)
+                    attn = monotonic_align.maximum_path(log_prior, attn_mask.squeeze(1))
+                    attn = attn.detach()  # b, t_text, T_mel
+            
+            logw_ = torch.log(1e-8 + torch.sum(attn, -1)) * phone_mask
+            mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x)
         # mu_y = mu_y.transpose(1, 2)
 
 
