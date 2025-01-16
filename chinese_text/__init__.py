@@ -1,9 +1,9 @@
-from chinese_text.symbols import symbols
+from chinese_text.symbols import valid_symbols
 
 
 # Mappings from symbol to numeric ID and vice versa:
-_symbol_to_id = {s: i for i, s in enumerate(symbols)}
-_id_to_symbol = {i: s for i, s in enumerate(symbols)}
+_symbol_to_id = {s: i for i, s in enumerate(valid_symbols)}
+_id_to_symbol = {i: s for i, s in enumerate(valid_symbols)}
 
 
 def cleaned_text_to_sequence(cleaned_text):

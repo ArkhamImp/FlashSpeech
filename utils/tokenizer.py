@@ -13,6 +13,8 @@ import torch
 import torchaudio
 from encodec import EncodecModel
 from encodec.utils import convert_audio
+from xcodec2.modeling_xcodec2 import XCodec2Model
+
 
 
 class AudioTokenizer:

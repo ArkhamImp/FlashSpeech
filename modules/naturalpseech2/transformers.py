@@ -231,7 +231,7 @@ class TransformerEncoder(nn.Module):
         else:
             x = self.position_emb(x)  # (B, T, d)
 
-        if self.use_tone_emb:
+        if tone_id is not None:
             tone_emb = self.tone_emb_tokens(tone_id)
             x = x + tone_emb
 

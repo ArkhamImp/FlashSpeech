@@ -1,10 +1,10 @@
 {
     "base_config": "egs/tts/NaturalSpeech2/exp_config_base_s1.json",
     "dataset": [
-      "Genshin"
+      "baker"
     ],
     "dataset_path": {
-      "Genshin": "/aifs4su/mingyang/FlashSpeech/data/genshin"
+      "baker": "/mnt/lsk_nas/mingyang/FlashSpeech/data/baker"
     },    
     "preprocess": {
       // Specify the output root path to save the processed data 
@@ -56,7 +56,7 @@
                 "attn_head": 8,
                 "drop_out": 0.5
             },
-            "dp": "f5"
+            "dp": "fs"
         },
         "diffusion": {
             "wavenet": {

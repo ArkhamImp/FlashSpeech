@@ -44,6 +44,7 @@ class FlashSpeechLightningModule(pl.LightningModule):
             phone_mask=batch["phone_mask"],
             mask=batch["mask"],
             ref_mask=batch["ref_mask"],
+            duration=batch["duration"],
             trainstep=self.global_step,
         )
         return diff_out, prior_out
@@ -51,9 +52,26 @@ class FlashSpeechLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         diff_out, prior_out = self.forward(batch)
         # 计算损失
-        pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
-        #dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
-        dur_loss = duration_loss(prior_out["dur_pred_log"], prior_out["logw_"], batch["phone_lengths"])
+        pitch_loss = 0.0
+        dur_loss = 0.0
+        if self.cfg.model.prior_encoder.dp == "mas":
+            pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
+            dur_loss = duration_loss(prior_out["dur_pred_log"], prior_out["logw_"], batch["phone_lengths"])
+            # # 获取第一个样本的attention alignment并画图
+            fig, ax = plt.subplots(figsize=(12, 6))
+            cax = ax.imshow(prior_out["attn"][-1].detach().cpu(), aspect='auto', origin='lower')
+            fig.colorbar(cax)
+            ax.set_title("Prior Attention Alignment")
+            ax.set_xlabel("Decoder steps")
+            ax.set_ylabel("Encoder steps")
+        
+            # # 使用WandB logger记录图像
+            self.logger.experiment.log({"train_attention": wandb.Image(fig)})
+            plt.close(fig)
+        elif self.cfg.model.prior_encoder.dp == "fs":
+            pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
+            dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
+        
         diff_loss_x0 = diff_out["ict_loss"].mean()
         total_loss = pitch_loss + dur_loss + diff_loss_x0
 
@@ -63,26 +81,32 @@ class FlashSpeechLightningModule(pl.LightningModule):
         self.log('train_dur_loss', dur_loss, prog_bar=True)
         self.log('train_diff_loss_x0', diff_loss_x0, prog_bar=True)
 
-        # 获取第一个样本的attention alignment并画图
-        fig, ax = plt.subplots(figsize=(12, 6))
-        cax = ax.imshow(prior_out["attn"][-1].detach().cpu(), aspect='auto', origin='lower')
-        fig.colorbar(cax)
-        ax.set_title("Prior Attention Alignment")
-        ax.set_xlabel("Decoder steps")
-        ax.set_ylabel("Encoder steps")
-        
-        # 使用WandB logger记录图像
-        self.logger.experiment.log({"train_attention": wandb.Image(fig)})
-        plt.close(fig)
+
 
         return total_loss
 
     def validation_step(self, batch, batch_idx):
         diff_out, prior_out = self.forward(batch)
         # 计算损失
-        pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
-        # dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
-        dur_loss = duration_loss(prior_out["dur_pred_log"], prior_out["logw_"], batch["phone_lengths"])
+        pitch_loss = 0.0
+        dur_loss = 0.0
+        if self.cfg.model.prior_encoder.dp == "mas":
+            pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
+            dur_loss = duration_loss(prior_out["dur_pred_log"], prior_out["logw_"], batch["phone_lengths"])
+            # 获取第一个样本的attention alignment并画图
+            fig, ax = plt.subplots(figsize=(12, 6))
+            cax = ax.imshow(prior_out["attn"][-1].detach().cpu(), aspect='auto', origin='lower')
+            fig.colorbar(cax)
+            ax.set_title("Prior Attention Alignment")
+            ax.set_xlabel("Decoder steps")
+            ax.set_ylabel("Encoder steps")
+        
+            # 使用WandB logger记录图像
+            self.logger.experiment.log({"val_attention": wandb.Image(fig)})
+            plt.close(fig)
+        elif self.cfg.model.prior_encoder.dp == "fs":
+            pitch_loss = log_pitch_loss(prior_out["pitch_pred_log"], batch["pitch"], mask=batch["mask"])
+            dur_loss = log_dur_loss(prior_out["dur_pred_log"], batch["duration"], mask=batch["phone_mask"])
         diff_loss_x0 = diff_out["ict_loss"].mean()
         total_loss = pitch_loss + dur_loss + diff_loss_x0
 
@@ -92,17 +116,7 @@ class FlashSpeechLightningModule(pl.LightningModule):
         self.log('val_dur_loss', dur_loss, prog_bar=True)
         self.log('val_diff_loss_x0', diff_loss_x0, prog_bar=True)
 
-        # 获取第一个样本的attention alignment并画图
-        fig, ax = plt.subplots(figsize=(12, 6))
-        cax = ax.imshow(prior_out["attn"][-1].detach().cpu(), aspect='auto', origin='lower')
-        fig.colorbar(cax)
-        ax.set_title("Prior Attention Alignment")
-        ax.set_xlabel("Decoder steps")
-        ax.set_ylabel("Encoder steps")
         
-        # 使用WandB logger记录图像
-        self.logger.experiment.log({"val_attention": wandb.Image(fig)})
-        plt.close(fig)
 
         return total_loss
 

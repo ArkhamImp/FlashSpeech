@@ -16,6 +16,7 @@ from modules.naturalpseech2.transformers import (
 import utils.monotonic_align as monotonic_align #cd monotonic_align; python setup.py build_ext --inplace
 import math
 from new_text import symbols, num_tones
+from chinese_text import valid_symbols
 
 def fix_len_compatibility(length, num_downsamplings_in_unet=2):
     factor = torch.scalar_tensor(2).pow(num_downsamplings_in_unet)
@@ -54,8 +55,12 @@ class PriorEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
+        if cfg.dp != "fs":
+            embed_size = len(symbols)
+        else:
+            embed_size = len(valid_symbols) + 3
         self.enc_emb_tokens = nn.Embedding(
-            len(symbols), cfg.encoder.encoder_hidden, padding_idx=0
+            embed_size, cfg.encoder.encoder_hidden, padding_idx=0
         )
         self.tone_emb_tokens = nn.Embedding(
             num_tones, cfg.encoder.encoder_hidden, padding_idx=0
@@ -64,8 +69,8 @@ class PriorEncoder(nn.Module):
         self.encoder = TransformerEncoder(
             enc_emb_tokens=self.enc_emb_tokens, tone_emb_tokens=self.tone_emb_tokens, cfg=cfg.encoder
         )
-        self.proj_m = nn.Conv1d(128, 128, 1)
-        self.y_norm = nn.BatchNorm1d(128)
+        if cfg.dp != "f5":
+            self.proj_m = nn.Conv1d(128, 40, 1)
 
         self.duration_predictor = DurationPredictor(cfg.duration_predictor)
         self.pitch_predictor = PitchPredictor(cfg.pitch_predictor)
@@ -99,6 +104,7 @@ class PriorEncoder(nn.Module):
         ref_emb=None,
         ref_mask=None,
         is_inference=False,
+        up_scale=None,
     ):
         """
         input:
@@ -171,35 +177,51 @@ class PriorEncoder(nn.Module):
                     attn = attn.detach()  # b, t_text, T_mel
             
             logw_ = torch.log(1e-8 + torch.sum(attn, -1)) * phone_mask
-            mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x)
-        # mu_y = mu_y.transpose(1, 2)
-
-
-        pitch_pred_log = self.pitch_predictor(mu_y, mask, ref_emb, ref_mask)
-
-        if is_inference or pitch is None:
-            pitch_tokens = torch.bucketize(pitch_pred_log.exp(), self.pitch_bins)
-            pitch_embedding = self.pitch_embedding(pitch_tokens)
-        else:
-            pitch_tokens = torch.bucketize(pitch, self.pitch_bins)
-            pitch_embedding = self.pitch_embedding(pitch_tokens)
-
-        mu_y = mu_y + pitch_embedding
-
-        if (not is_inference) and (mask is not None):
-            mu_y = mu_y * mask.to(mu_y.dtype)[:, :, None]
-
+            mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), x)
+            # mu_y = mu_y.transpose(1, 2)
+        elif self.cfg.dp == "f5":
+            if up_scale is not None:
+                mu_y = torch.zeros(x.shape[0], x.shape[1] * up_scale, x.shape[2], device=x.device, dtype=x.dtype)
+            elif latent is not None:
+                mu_y = torch.zeros(x.shape[0], latent.shape[2], x.shape[2], device=x.device, dtype=x.dtype)
+            mu_y[:, :x.shape[1], :] = x
+        elif self.cfg.dp == "fs":
+            dur_pred_out = self.duration_predictor(x, phone_mask, ref_emb, ref_mask)
+            if is_inference or duration is None:
+                mu_y, mel_len = self.length_regulator(
+                    x,
+                    dur_pred_out["dur_pred_round"],
+                    max_len=torch.max(torch.sum(dur_pred_out["dur_pred_round"], dim=1)),
+                )
+            else:
+                mu_y, mel_len = self.length_regulator(x, duration, max_len=pitch.shape[1])
         prior_out = {
-            "dur_pred_round": dur_pred_out["dur_pred_round"],
-            "dur_pred_log": dur_pred_out["dur_pred_log"],
-            "dur_pred": dur_pred_out["dur_pred"],
-            "pitch_pred_log": pitch_pred_log,
-            "pitch_token": pitch_tokens,
-            #"mel_len": mel_len,
             "prior_out": mu_y,
-            "logw_": logw_,
-            "attn": attn,
         }
+
+        if self.cfg.dp != "f5":
+            pitch_pred_log = self.pitch_predictor(mu_y, mask, ref_emb, ref_mask)
+
+            if is_inference or pitch is None:
+                pitch_tokens = torch.bucketize(pitch_pred_log.exp(), self.pitch_bins)
+                pitch_embedding = self.pitch_embedding(pitch_tokens)
+            else:
+                pitch_tokens = torch.bucketize(pitch, self.pitch_bins)
+                pitch_embedding = self.pitch_embedding(pitch_tokens)
+
+            mu_y = mu_y + pitch_embedding
+
+            if (not is_inference) and (mask is not None):
+                mu_y = mu_y * mask.to(mu_y.dtype)[:, :, None]
+
+            prior_out["dur_pred_round"] = dur_pred_out["dur_pred_round"]
+            prior_out["dur_pred_log"] = dur_pred_out["dur_pred_log"]
+            prior_out["dur_pred"] = dur_pred_out["dur_pred"]
+            prior_out["pitch_pred_log"] = pitch_pred_log
+            prior_out["pitch_token"] = pitch_tokens
+            if self.cfg.dp == "mas":
+                prior_out["logw_"] = logw_
+                prior_out["attn"] = attn
 
         return prior_out
 

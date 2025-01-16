@@ -1,6 +1,6 @@
 baker
 data
-flashspeech_log
+flashspeech_*
 genshin
 .vscode
 output*
@@ -10,5 +10,3 @@ train_baker
 **/__pycache__/*
 wandb
 *.pyc
-**/*.pyc
-**/**/*.pyc

@@ -16,11 +16,11 @@ work_dir='/mnt/lsk_nas/mingyang/FlashSpeech'
 export WORK_DIR=$work_dir
 export PYTHONPATH=$work_dir
 export PYTHONIOENCODING=UTF-8
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=5
  
 ######## Set Experiment Configuration ###########
 exp_config="$exp_dir/exp_config_s1.json" #s1 or s2
-exp_name="flashspeech_log"
+exp_name="flashspeech_fs"
 
 stage=1
 stop_stage=1
@@ -39,7 +39,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         bins/tts/train_new.py \
         --config=$exp_config \
         --exp_name=$exp_name \
-        --log_level debug \
-        --resume \
-        --checkpoint_path /mnt/lsk_nas/mingyang/FlashSpeech/flashspeech_log/last-v10.ckpt > train.out 2>&1 &
+        --log_level debug > train_fs.out 2>&1 &
+        # --resume \
+        # --checkpoint_path /mnt/lsk_nas/mingyang/FlashSpeech/flashspeech_log/last-v10.ckpt 
 fi

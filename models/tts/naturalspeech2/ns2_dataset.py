@@ -20,6 +20,7 @@ from new_text import cleaned_text_to_sequence
 from tqdm import tqdm
 import pickle
 import tgt
+from chinese_text import valid_symbols
 
 class NS2Dataset(torch.utils.data.Dataset):
     def __init__(self, cfg, dataset, is_valid=False):
@@ -33,12 +34,16 @@ class NS2Dataset(torch.utils.data.Dataset):
 
         self.metafile_path = os.path.join(processed_data_dir, meta_file)
 
-        self.metadata = self.get_metadata()
+        metadata = self.get_metadata()
+        self.metadata = []
+        for utt_info in metadata:
+            if os.path.exists(utt_info["Path"].replace(".wav", ".TextGrid")):
+                self.metadata.append(utt_info)
 
         self.sampling_rate=24000
         self.hop_length=320
         # get phone to id / id to phone map
-        # self.phone2id, self.id2phone = self.get_phone_map()
+        self.phone2id, self.id2phone = self.get_phone_map()
 
         self.all_num_frames = []
         for i in range(len(self.metadata)):
@@ -55,28 +60,32 @@ class NS2Dataset(torch.utils.data.Dataset):
 
         # self.all_codes = []
         # self.all_pitches = []
-        # self.all_durations = []
+        self.all_durations = []
         self.all_phone_ids = []
         self.all_tone_ids = []
         # self.all_frame_nums = []
 
         for utt_info in tqdm(self.metadata):
             # 加载代码
-            # path_formatted_uid = utt_info["Uid"]
-            text = utt_info["Text"]
-            norm_text, phone, tone, word2ph = clean_text(text, 'ZH')
-            phone, tone, language = cleaned_text_to_sequence(phone, tone, 'ZH')
- 
+            path_formatted_uid = utt_info["Uid"]
+            if self.cfg.model.prior_encoder.dp == "f5" or self.cfg.model.prior_encoder.dp == "mas":
+                text = utt_info["Text"]
+                norm_text, phone, tone, word2ph = clean_text(text, 'ZH')
+                phone, tone, language = cleaned_text_to_sequence(phone, tone, 'ZH')
+                self.all_tone_ids.append(tone)
+                self.all_durations.append(None)
+            elif self.cfg.model.prior_encoder.dp == "fs":
+                textgrid_path = utt_info["Path"].replace(".wav", ".TextGrid")
+                textgrid = tgt.io.read_textgrid(textgrid_path)
+                phone, duration, _, _ = self.get_alignment(textgrid.get_tier_by_name('phone'))
+                phone = np.array([self.phone2id.get(p) for p in phone])
+                self.all_tone_ids.append(None)
+                self.all_durations.append(duration)
 
-            # 加载对齐信息并计算持续时间和音素ID
-            # textgrid_path = os.path.join(cfg.dataset_path[utt_info["Dataset"]], 'PhoneLabeling', f"{path_formatted_uid}.interval")
-            # textgrid = tgt.io.read_textgrid(textgrid_path)
-            # phone, duration, _, _ = self.get_alignment(textgrid.tiers[0])
-            # phone_id = np.array([self.phone2id.get(p) for p in phone])
-
-            # self.all_durations.append(duration)
+            # 
             self.all_phone_ids.append(phone)
-            self.all_tone_ids.append(tone)
+
+            
 
             # 计算帧数
             # frame_nums = code.shape[1]
@@ -98,12 +107,12 @@ class NS2Dataset(torch.utils.data.Dataset):
 
         return metadata
 
-    # def get_phone_map(self):
-    #     symbols = ["_"] + valid_symbols + ["sp", "sp1", "sil"] + ["<s>", "</s>"]+["<br>"]
-    #     phone2id = {s: i for i, s in enumerate(symbols)}
-    #     id2phone = {i: s for s, i in phone2id.items()}
-    #     self.symbols = symbols
-    #     return phone2id, id2phone
+    def get_phone_map(self):
+        symbols = ["_"] + valid_symbols + ["<s>", "</s>"]
+        phone2id = {s: i for i, s in enumerate(symbols)}
+        id2phone = {i: s for s, i in phone2id.items()}
+        self.symbols = symbols
+        return phone2id, id2phone
  
     def get_alignment(self, tier):
         sil_phones = ["sil", "sp", "spn"]
@@ -147,9 +156,7 @@ class NS2Dataset(torch.utils.data.Dataset):
         # durations = durations[:end_idx]
         if phones[-1] in sil_phones:
             phones[-1] = "</s>"
-        else:
-            phones.append("</s>")
-            durations.append(int(0))
+
         return phones, durations, start_time, end_time
          
 
@@ -174,10 +181,10 @@ class NS2Dataset(torch.utils.data.Dataset):
         pitch_path = os.path.join(pitch_root_path, f"{path_formatted_uid}.npy")
         pitch = np.load(pitch_path)
 
-        mel_root_path = os.path.join(self.processed_data_dir, 'mels')
+        mel_root_path = os.path.join(self.processed_data_dir, 'mels_40')
         mel_path = os.path.join(mel_root_path, f"{path_formatted_uid}.npy")
         mel = np.load(mel_path)
-        with open(os.path.join(self.processed_data_dir, 'mels.stat'), 'rb') as f:
+        with open(os.path.join(self.processed_data_dir, 'mels_40.stats'), 'rb') as f:
             scaler = pickle.load(f)
         mel = scaler.transform(mel.transpose()).transpose()
   
@@ -199,28 +206,28 @@ class NS2Dataset(torch.utils.data.Dataset):
 
         # code = self.all_codes[index]
         # pitch = self.all_pitches[index]
-        # duration = self.all_durations[index]
+        duration = self.all_durations[index]
         phone_id = self.all_phone_ids[index]
         tone_id = self.all_tone_ids[index]
         # frame_nums = self.all_frame_nums[index]
 
         # 获取说话人ID
         # spkid = self.metadata[index]["Singer"]
-        code, pitch, phone_id, mel, frame_nums = self.align_length(
-            code, pitch, phone_id, mel, frame_nums
+        code, pitch, phone_id, duration, mel, frame_nums = self.align_length(
+            code, pitch, phone_id, duration, mel, frame_nums
         )
 
         # spkid
         # spkid = self.utt2spkid[utt]
 
         # get target and reference
-        out = self.get_target_and_reference(code, pitch, phone_id, tone_id, frame_nums)
+        out = self.get_target_and_reference(code, pitch, phone_id, tone_id, frame_nums, duration)
         code, ref_code = out["code"], out["ref_code"]
         pitch, ref_pitch = out["pitch"], out["ref_pitch"]
         phone_id = out["phone_id"]
         tone_id = out["tone_id"]
         frame_nums, ref_frame_nums = out["frame_nums"], out["ref_frame_nums"]
-
+        duration = out["duration"]
         single_feature.update(
             {
                 "code": code,
@@ -231,7 +238,8 @@ class NS2Dataset(torch.utils.data.Dataset):
                 "ref_frame_nums": ref_frame_nums,
                 "ref_pitch": ref_pitch,
                 "tone_id": tone_id,
-                "mel": mel
+                "mel": mel,
+                "duration": duration
             }
         )
 
@@ -242,7 +250,7 @@ class NS2Dataset(torch.utils.data.Dataset):
  
         return utt_info["Duration"]*75
 
-    def align_length(self, code, pitch, phone_id, mel, frame_nums):
+    def align_length(self, code, pitch, phone_id, duration, mel, frame_nums):
         # aligh lenght of code, pitch, duration, phone_id, and frame nums
         code_len = code.shape[1]
         pitch_len = len(pitch)
@@ -255,14 +263,16 @@ class NS2Dataset(torch.utils.data.Dataset):
         #     pitch = np.pad(pitch, (0, min_len - pitch_len), mode="edge")
         mel = mel[:, :min_len]
         frame_nums = min_len
-        # if dur_sum > min_len:
-        # assert (duration[-1] - (dur_sum - min_len)) >= 0
-        # duration[-1] = duration[-1] - (dur_sum - min_len)
-        # assert duration[-1] >= 0
+        if duration is not None:
+            dur_sum = np.sum(duration)
+            if dur_sum > min_len:
+                assert (duration[-1] - (dur_sum - min_len)) >= 0
+                duration[-1] = duration[-1] - (dur_sum - min_len)
+                assert duration[-1] >= 0
 
-        return code, pitch, phone_id, mel, frame_nums
+        return code, pitch, phone_id, duration, mel, frame_nums
 
-    def get_target_and_reference(self, code, pitch, phone_id, tone_id, frame_nums):
+    def get_target_and_reference(self, code, pitch, phone_id, tone_id, frame_nums, duration):
         phone_nums = len(phone_id)
         clip_frame_nums = np.random.randint(
             int(frame_nums * 0.1), int(frame_nums * 0.5) + 1
@@ -289,6 +299,7 @@ class NS2Dataset(torch.utils.data.Dataset):
         new_frame_nums = frame_nums - (end_frames - start_frames)
         ref_frame_nums = end_frames - start_frames
 
+
         return {
             "code": code,
             "ref_code": ref_code,
@@ -298,6 +309,7 @@ class NS2Dataset(torch.utils.data.Dataset):
             "tone_id": tone_id,
             "frame_nums": frame_nums,
             "ref_frame_nums": ref_frame_nums,
+            "duration": np.array(duration, dtype=np.int64) if duration is not None else None,
         }
 
 
@@ -331,7 +343,6 @@ class NS2Collator(BaseOfflineCollator):
         for key in batch[0].keys():
             if key == "phone_id":
                 phone_ids = [torch.LongTensor(b["phone_id"]) for b in batch]
-                tone_ids = [torch.LongTensor(b["tone_id"]) for b in batch]
                 packed_batch_features["phone_lengths"] = torch.LongTensor([len(b["phone_id"]) for b in batch])
                 phone_masks = [torch.ones(len(b["phone_id"])) for b in batch]
                 packed_batch_features["phone_id"] = pad_sequence(
@@ -341,11 +352,6 @@ class NS2Collator(BaseOfflineCollator):
                 )
                 packed_batch_features["phone_mask"] = pad_sequence(
                     phone_masks,
-                    batch_first=True,
-                    padding_value=0,
-                )
-                packed_batch_features["tone_id"] = pad_sequence(
-                    tone_ids,
                     batch_first=True,
                     padding_value=0,
                 )
@@ -397,6 +403,26 @@ class NS2Collator(BaseOfflineCollator):
                     batch_first=True,
                     padding_value=0,
                 ).transpose(1, 2)
+            elif key == "duration":
+                if self.cfg.model.prior_encoder.dp == "fs":
+                    durations = [torch.from_numpy(b["duration"]) for b in batch]
+                    packed_batch_features["duration"] = pad_sequence(
+                        durations,
+                        batch_first=True,
+                        padding_value=0,
+                    )
+                else:
+                    packed_batch_features["duration"] = None
+            elif key == "tone_id":
+                if self.cfg.model.prior_encoder.dp != "fs":
+                    tone_ids = [torch.LongTensor(b["tone_id"]) for b in batch]
+                    packed_batch_features["tone_id"] = pad_sequence(
+                        tone_ids,
+                        batch_first=True,
+                        padding_value=0,
+                    )
+                else:
+                    packed_batch_features["tone_id"] = None
             else:
                 pass
 

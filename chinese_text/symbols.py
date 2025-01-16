@@ -1,7 +1,6 @@
-_pause = ["sil", "eos", "sp", "#0", "#1", "#2", "#3"]
+_pause = ["sil"]
 
 _initials = [
-    "^",
     "b",
     "c",
     "ch",
@@ -20,9 +19,12 @@ _initials = [
     "s",
     "sh",
     "t",
+    "w",
     "x",
+    "y",
     "z",
     "zh",
+    "rr",
 ]
 
 _tones = ["1", "2", "3", "4", "5"]
@@ -50,6 +52,7 @@ _finals = [
     "ing",
     "iong",
     "iou",
+    "n",
     "o",
     "ong",
     "ou",
@@ -68,4 +71,4 @@ _finals = [
     "vn",
 ]
 
-symbols = _pause + _initials + [i + j for i in _finals for j in _tones]
+valid_symbols = _pause + _initials + [i + j for i in _finals for j in _tones]

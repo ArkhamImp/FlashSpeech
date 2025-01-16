@@ -9,6 +9,11 @@ import torch
 import soundfile as sf
 import numpy as np
 
+from pypinyin import pinyin, lazy_pinyin, Style
+import re
+import matplotlib.pyplot as plt
+import torchaudio.transforms as T
+
 # from models.tts.naturalspeech2.ns2 import NaturalSpeech2
 from models.tts.naturalspeech2.flashspeech import FlashSpeech
 from encodec import EncodecModel
@@ -21,8 +26,42 @@ from utils.util import load_config
 # from chinese_text.pinyin import PinYin
 from new_text.cleaner import clean_text
 from new_text import cleaned_text_to_sequence
+from chinese_text.symbols import valid_symbols
 
 import torchaudio
+
+def get_dict(path='data/Genshin/process_fa/pinyin-lexicon-r.txt'):
+    w_ph_dict = {}
+    with open(path, 'r') as file:
+        for line in file:
+            lst = line.strip().split()
+            w, ph = lst[0], lst[1:]
+            w_ph_dict[w] = ph
+    w_ph_dict['*'] = '*'
+    w_ph_dict['n2'] = ['n2']
+    return w_ph_dict
+
+def preprocess_pinyin(pinyin):
+    output = []
+    for i in range(len(pinyin)):
+        if "$" in pinyin[i]:
+            continue
+        if i == 0 or i == len(pinyin) - 1:
+            output.append(pinyin[i])
+        elif pinyin[i][0] in [',', '。', '，', '！', '!', '?', '？', '…']:
+            output.append('*')
+        else:
+            output.append(pinyin[i])
+    return output
+
+def normalize_uroman(text, with_tone=False):
+    text = text.lower()
+    text = text.replace("’", "'")
+    if with_tone:
+        text = re.sub("([^a-z0-9* ])", " ", text)
+    else:
+        text = re.sub("([^a-z* ])", " ", text)
+    return text.strip()
 
 
 class FlashSpeechInference:
@@ -33,9 +72,9 @@ class FlashSpeechInference:
         self.model = self.build_model()
         # self.codec = self.build_codec()
 
-        # self.symbols = ["_"] + valid_symbols + ["sp", "sp1", "sil"] + ["<s>", "</s>"]+["<br>"]
-        # self.phone2id = {s: i for i, s in enumerate(self.symbols)}
-        # self.id2phone = {i: s for s, i in self.phone2id.items()}
+        self.symbols = ["_"] + valid_symbols + ["<s>", "</s>"]
+        self.phone2id = {s: i for i, s in enumerate(self.symbols)}
+        self.id2phone = {i: s for s, i in self.phone2id.items()}
         codec_model = EncodecModel.encodec_model_24khz()
         codec_model.set_target_bandwidth(6.0)
         codec_model.requires_grad_(False)
@@ -92,11 +131,36 @@ class FlashSpeechInference:
 
         # lexicon = read_lexicon(self.cfg.preprocess.lexicon_path)
         # phone_seq = preprocess_english(self.args.text, lexicon)
-        norm_text, phone, tone, word2ph = clean_text(self.args.text, 'ZH')
-        phone_id, tone_id, language = cleaned_text_to_sequence(phone, tone, 'ZH')
+        if self.cfg.model.prior_encoder.dp != 'fs':
+            norm_text, phone, tone, word2ph = clean_text(self.args.text, 'ZH')
+            phone_id, tone_id, language = cleaned_text_to_sequence(phone, tone, 'ZH')
+            tone_id = torch.LongTensor(tone_id).unsqueeze(0).to(device=self.args.device)
+        else:
+            pinyin = lazy_pinyin(self.args.text, style=Style.TONE3, neutral_tone_with_five=True)
+            pinyin = preprocess_pinyin(pinyin)
 
+            pinyin_w_tone = normalize_uroman(' '.join(pinyin), with_tone=True)
+            pinyin_w_tone_lst = pinyin_w_tone.split()
+
+            w_ph_dict = get_dict()
+            tmp = [w_ph_dict[w] for w in pinyin_w_tone.split()]
+            phone = []
+            phone.append("<s>")
+            for item in tmp:
+                if isinstance(item, str):
+                    phone.append(item.replace("*", "sil"))
+                else:
+                    phone.extend(item)
+            phone.append("</s>")
+            phone_id = np.array([self.phone2id.get(p) for p in phone])
+            tone_id = None
         print(phone)
 
+        if self.cfg.model.prior_encoder.dp == 'f5':
+            norm_text, phone, tone, word2ph = clean_text(self.args.ref_text, 'ZH')
+            up_scale = round(ref_code.shape[-1]/len(phone))
+        else:
+            up_scale = 1
         # phone_id = np.array(
         #     [
         #         *map(
@@ -106,15 +170,16 @@ class FlashSpeechInference:
         #     ]
         # )
         phone_id = torch.LongTensor(phone_id).unsqueeze(0).to(device=self.args.device)
-        tone_id = torch.LongTensor(tone_id).unsqueeze(0).to(device=self.args.device)
+        
         print(phone_id)
         print('inference_step',self.args.inference_step)
         x0, prior_out = self.model.inference(
-            ref_code, phone_id, tone_id, ref_mask, self.args.inference_step
+            ref_code, phone_id, tone_id, ref_mask, self.args.inference_step, up_scale
         )
-        print(prior_out["dur_pred"])
-        print(prior_out["dur_pred_round"])
-        print(torch.sum(prior_out["dur_pred_round"]))
+        if self.cfg.model.prior_encoder.dp != 'f5':
+            print(prior_out["dur_pred"])
+            print(prior_out["dur_pred_round"])
+            print(torch.sum(prior_out["dur_pred_round"]))
 
         # ref_wav = self.model.soundstream.decode(ref_code.unsqueeze(1)) #.transpose(0, 1))
 
@@ -139,6 +204,12 @@ class FlashSpeechInference:
             type=str,
             default="",
             help="Reference audio path",
+        )
+        parser.add_argument(
+            "--ref_text",
+            type=str,
+            default="",
+            help="Reference text",
         )
         parser.add_argument(
             "--device",

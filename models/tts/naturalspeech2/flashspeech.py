@@ -42,8 +42,13 @@ class FlashSpeech(nn.Module):
                 self.latent_dim, cfg.prompt_encoder.encoder_hidden
             )
             self.prompt_lin.weight.data.normal_(0.0, 0.02)
+            self.latent_lin = nn.Linear(
+                self.latent_dim, cfg.prompt_encoder.encoder_hidden
+            )
+            self.latent_lin.weight.data.normal_(0.0, 0.02)
         else:
             self.prompt_lin = None
+            self.latent_lin = None
 
         self.query_emb = nn.Embedding(self.query_emb_num, cfg.query_emb.hidden_size)
         self.query_attn = nn.MultiheadAttention(
@@ -151,7 +156,7 @@ class FlashSpeech(nn.Module):
         pitch=None,
         phone_id=None,
         tone_id=None,
-        frame_nums=None,
+        duration=None,
         ref_code=None,
         ref_frame_nums=None,
         phone_mask=None,
@@ -187,7 +192,7 @@ class FlashSpeech(nn.Module):
             tone_id=tone_id,
             mel=mel,
             latent=latent,
-            duration=None,
+            duration=duration,
             pitch=pitch,
             phone_mask=phone_mask,
             mask=mask,
@@ -203,7 +208,7 @@ class FlashSpeech(nn.Module):
 
     @torch.no_grad()
     def inference(
-        self, ref_code=None, phone_id=None, tone_id=None, ref_mask=None, inference_steps=1000
+        self, ref_code=None, phone_id=None, tone_id=None, ref_mask=None, inference_steps=1000, up_scale=1
     ):
         ref_latent = self.code_to_latent(ref_code)
 
@@ -238,6 +243,7 @@ class FlashSpeech(nn.Module):
             ref_emb=spk_emb,
             ref_mask=ref_mask,
             is_inference=True,
+            up_scale=up_scale
         )
         prior_condition = prior_out["prior_out"]  # (B, T, d)
 
